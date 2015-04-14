@@ -92,6 +92,15 @@ struct jb_framedata {
 	void *jb_obj;
 };
 
+struct jb_datastore {
+	int framehook;
+	char *data;
+	char *value;
+};
+
+static int jb_helper(struct ast_channel *chan, char *data, const char *value);
+static void datastore_chan_fixup_cb(void *data, struct ast_channel *clonechan, struct ast_channel *original);
+
 static void jb_framedata_destroy(struct jb_framedata *framedata)
 {
 	if (framedata->timer) {
@@ -186,15 +195,32 @@ static int jb_framedata_init(struct jb_framedata *framedata, const char *data, c
 	return 0;
 }
 
-static void datastore_destroy_cb(void *data) {
+static void datastore_destroy_cb(void *data)
+{
+	struct jb_datastore *jb_data = data;
+
+	ast_free(jb_data->data);
+	ast_free(jb_data->value);
 	ast_free(data);
+
 	ast_debug(1, "JITTERBUFFER datastore destroyed\n");
 }
 
 static const struct ast_datastore_info jb_datastore = {
 	.type = "jitterbuffer",
-	.destroy = datastore_destroy_cb
+	.destroy = datastore_destroy_cb,
+	.chan_fixup = datastore_chan_fixup_cb
 };
+
+static void datastore_chan_fixup_cb(void *data, struct ast_channel *clonechan, struct ast_channel *original)
+{
+	struct ast_datastore *store = ast_channel_datastore_find(clonechan, &jb_datastore, NULL);
+	struct jb_datastore *jb_data = data;
+
+	jb_helper(original, jb_data->data, jb_data->value);
+	ast_channel_datastore_remove(clonechan, store);
+	ast_datastore_free(store);
+}
 
 static void hook_destroy_cb(void *framedata)
 {
@@ -325,7 +351,7 @@ static struct ast_frame *hook_event_cb(struct ast_channel *chan, struct ast_fram
 	return frame;
 }
 
-static int jb_helper(struct ast_channel *chan, const char *cmd, char *data, const char *value)
+static int jb_helper(struct ast_channel *chan, char *data, const char *value)
 {
 	struct jb_framedata *framedata;
 	struct ast_datastore *datastore = NULL;
@@ -335,11 +361,6 @@ static int jb_helper(struct ast_channel *chan, const char *cmd, char *data, cons
 		.destroy_cb = hook_destroy_cb,
 	};
 	int i = 0;
-
-	if (!chan) {
-		ast_log(LOG_WARNING, "No channel was provided to %s function.\n", cmd);
-		return -1;
-	}
 
 	if (!(framedata = ast_calloc(1, sizeof(*framedata)))) {
 		return 0;
@@ -352,32 +373,34 @@ static int jb_helper(struct ast_channel *chan, const char *cmd, char *data, cons
 
 	interface.data = framedata;
 
-	ast_channel_lock(chan);
 	i = ast_framehook_attach(chan, &interface);
 	if (i >= 0) {
-		int *id;
+		struct jb_datastore *dstore;
 		if ((datastore = ast_channel_datastore_find(chan, &jb_datastore, NULL))) {
-			id = datastore->data;
-			ast_framehook_detach(chan, *id);
+			dstore = datastore->data;
+			ast_framehook_detach(chan, dstore->framehook);
 			ast_channel_datastore_remove(chan, datastore);
 			ast_datastore_free(datastore);
 		}
 
 		if (!(datastore = ast_datastore_alloc(&jb_datastore, NULL))) {
 			ast_framehook_detach(chan, i);
-			ast_channel_unlock(chan);
 			return 0;
 		}
 
-		if (!(id = ast_calloc(1, sizeof(int)))) {
+		if (!(dstore = ast_calloc(1, sizeof(*dstore)))) {
 			ast_datastore_free(datastore);
 			ast_framehook_detach(chan, i);
-			ast_channel_unlock(chan);
 			return 0;
 		}
 
-		*id = i; /* Store off the id. The channel is still locked so it is safe to access this ptr. */
-		datastore->data = id;
+		/* Store off the id. The channel is still locked so it is safe to access this ptr. */
+		dstore->framehook = i;
+		/* Store data / value to allow JB recreation on masquerade */
+		dstore->data = ast_strdup(data);
+		dstore->value = ast_strdup(value);
+
+		datastore->data = dstore;
 		ast_channel_datastore_add(chan, datastore);
 
 		ast_channel_set_fd(chan, AST_JITTERBUFFER_FD, framedata->timer_fd);
@@ -385,14 +408,29 @@ static int jb_helper(struct ast_channel *chan, const char *cmd, char *data, cons
 		jb_framedata_destroy(framedata);
 		framedata = NULL;
 	}
-	ast_channel_unlock(chan);
 
 	return 0;
 }
 
+static int jitterbuffer_write(struct ast_channel *chan, const char *cmd, char *data, const char *value)
+{
+	int res;
+
+	if (!chan) {
+		ast_log(LOG_WARNING, "No channel was provided to %s function.\n", cmd);
+		return -1;
+	}
+
+	ast_channel_lock(chan);
+	res = jb_helper(chan, data, value);
+	ast_channel_unlock(chan);
+
+	return res;
+}
+
 static struct ast_custom_function jb_function = {
 	.name = "JITTERBUFFER",
-	.write = jb_helper,
+	.write = jitterbuffer_write,
 };
 
 static int unload_module(void)

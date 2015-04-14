@@ -7116,10 +7116,11 @@ int ast_do_masquerade(struct ast_channel *original)
 	/* Keep the same parkinglot. */
 	ast_channel_parkinglot_set(original, ast_channel_parkinglot(clonechan));
 
-	/* Copy the FD's other than the generator fd */
+	/* Copy the FD's other than the generator and jitterbuffer FD's */
 	for (x = 0; x < AST_MAX_FDS; x++) {
-		if (x != AST_GENERATOR_FD)
+		if (x != AST_GENERATOR_FD && x != AST_JITTERBUFFER_FD) {
 			ast_channel_set_fd(original, x, ast_channel_fd(clonechan, x));
+		}
 	}
 
 	ast_app_group_update(clonechan, original);
