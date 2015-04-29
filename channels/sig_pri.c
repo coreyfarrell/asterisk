@@ -6643,7 +6643,26 @@ static void *pri_dchannel(void *vpri)
 
 					ast_verb(3, "PROGRESS with cause code %d received\n", e->proceeding.cause);
 
-					/* Work around broken, out of spec USER_BUSY cause in a progress message */
+					/* Work around broken, out of spec cause code in a progress message */
+					if (e->proceeding.cause == AST_CAUSE_UNALLOCATED
+						|| e->proceeding.cause == AST_CAUSE_NO_ROUTE_DESTINATION
+						|| e->proceeding.cause == 4
+						|| e->proceeding.cause == AST_CAUSE_NUMBER_CHANGED
+						|| e->proceeding.cause == AST_CAUSE_DESTINATION_OUT_OF_ORDER
+						|| e->proceeding.cause == AST_CAUSE_INVALID_NUMBER_FORMAT
+						|| e->proceeding.cause == AST_CAUSE_FACILITY_REJECTED
+						|| e->proceeding.cause == AST_CAUSE_NORMAL_UNSPECIFIED
+						|| e->proceeding.cause == AST_CAUSE_NORMAL_CIRCUIT_CONGESTION
+						|| e->proceeding.cause == AST_CAUSE_NETWORK_OUT_OF_ORDER
+						|| e->proceeding.cause == AST_CAUSE_NORMAL_TEMPORARY_FAILURE
+						|| e->proceeding.cause == AST_CAUSE_SWITCH_CONGESTION
+						|| e->proceeding.cause == AST_CAUSE_INTERWORKING) {
+						if (pri->pvts[chanpos]->owner) {
+							ast_verb(3, "PROGRESS with hangup code received, signaling soft hangup\n");
+							ast_softhangup(pri->pvts[chanpos]->owner, e->proceeding.cause);
+						}
+					}
+
 					if (e->proceeding.cause == AST_CAUSE_USER_BUSY) {
 						if (pri->pvts[chanpos]->owner) {
 							ast_verb(3, "PROGRESS with 'user busy' received, signaling AST_CONTROL_BUSY instead of AST_CONTROL_PROGRESS\n");
