@@ -292,17 +292,11 @@ struct ast_json *ast_json_stringf(const char *format, ...)
 
 struct ast_json *ast_json_vstringf(const char *format, va_list args)
 {
-	char *str = NULL;
-	json_t *ret = NULL;
-
-	if (format) {
-		int err = ast_vasprintf(&str, format, args);
-		if (err >= 0) {
-			ret = json_string(str);
-			ast_free(str);
-		}
+	if (!format) {
+		return NULL;
 	}
-	return (struct ast_json *)ret;
+
+	return (struct ast_json *)json_vsprintf(format, args);
 }
 
 struct ast_json *ast_json_integer_create(intmax_t value)
@@ -747,37 +741,15 @@ static struct ast_json *json_party_subaddress(struct ast_party_subaddress *subad
 
 struct ast_json *ast_json_party_id(struct ast_party_id *party)
 {
-	RAII_VAR(struct ast_json *, json_party_id, NULL, ast_json_unref);
-	int pres;
+	int pres = ast_party_id_presentation(party);
 
 	/* Combined party presentation */
-	pres = ast_party_id_presentation(party);
-	json_party_id = ast_json_pack("{s: i, s: s}",
+	return ast_json_pack("{s: i, s: s, s: o*, s: o*, s: o*}",
 		"presentation", pres,
-		"presentation_txt", ast_describe_caller_presentation(pres));
-	if (!json_party_id) {
-		return NULL;
-	}
-
-	/* Party number */
-	if (party->number.valid
-		&& ast_json_object_set(json_party_id, "number", json_party_number(&party->number))) {
-		return NULL;
-	}
-
-	/* Party name */
-	if (party->name.valid
-		&& ast_json_object_set(json_party_id, "name", json_party_name(&party->name))) {
-		return NULL;
-	}
-
-	/* Party subaddress */
-	if (party->subaddress.valid
-		&& ast_json_object_set(json_party_id, "subaddress", json_party_subaddress(&party->subaddress))) {
-		return NULL;
-	}
-
-	return ast_json_ref(json_party_id);
+		"presentation_txt", ast_describe_caller_presentation(pres),
+		"number", json_party_number(&party->number),
+		"name", json_party_name(&party->name),
+		"subaddress", json_party_subaddress(&party->subaddress));
 }
 
 enum ast_json_to_ast_vars_code ast_json_to_ast_variables(struct ast_json *json_variables, struct ast_variable **variables)
